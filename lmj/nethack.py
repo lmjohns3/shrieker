@@ -144,7 +144,8 @@ class ArmorItem(InventoryItem): pass
 class WeaponsItem(InventoryItem):
     @property
     def is_wielded(self):
-        return '(weapon in hand)' in self.raw
+        return ('(weapon in hand)' in self.raw or
+                '(weapon in hands)' in self.raw)
 
     @property
     def is_alternate(self):
@@ -164,7 +165,7 @@ class ToolsItem(InventoryItem): pass
 
 
 class NethackBot:
-    OPTIONS = 'CHARACTER=%(character)s\nOPTIONS=hilite_pet,pickup_types:$?+!=/,gender:%(gender)s,race:%(race)s'
+    OPTIONS = 'CHARACTER=%(character)s\nOPTIONS=hilite_pet,pickup_types:$?+!=/,gender:%(gender)s,race:%(race)s,align:%(align)s'
 
     def play(self, **kwargs):
         shape = (25, 80)
@@ -185,7 +186,10 @@ class NethackBot:
         self.inventory = {}
         self.spells = {}
 
-        opts = dict(character='ran', gender=random.choice(['mal', 'fem']), race='elf')
+        opts = dict(character=random.choice('ran wiz'.split()),
+                    gender=random.choice('mal fem'.split()),
+                    race=random.choice('elf hum'.split()),
+                    align=random.choice('cha neu'.split()))
         opts.update(kwargs)
 
         handle = tempfile.NamedTemporaryFile()
@@ -202,11 +206,26 @@ class NethackBot:
     def choose_answer(self):
         raise NotImplementedError
 
-    def neighborhood(self, n=3):
+    def neighborhood(self, radius=3):
         rows, cols = self.glyphs.shape
-        Y, X = self.cursor
-        return self.glyphs[slice(max(0, Y - 5), min(Y + 5, rows - 3)),
-                           slice(max(0, X - 5), min(X + 5, cols))]
+        y, x = self.cursor
+        ymin = y - radius
+        ymax = y + radius + 1
+        xmin = x - radius
+        xmax = x + radius + 1
+        hood = self.glyphs[slice(max(0, ymin), min(ymax, rows - 3)),
+                           slice(max(0, xmin), min(xmax, cols))]
+        for _ in xrange(abs(min(0, ymin))):
+            hood = numpy.hstack(numpy.zeros(), hood)
+        for _ in xrange(abs(min(0, xmin))):
+            hood = numpy.vstack(numpy.zeros(), hood)
+        for _ in xrange(max(0, ymax - cols)):
+            hood = numpy.hstack(hood, numpy.zeros())
+        for _ in xrange(max(0, xmax - (rows - 3))):
+            hood = numpy.vstack(hood, numpy.zeros())
+        assert hood.shape == (2 * radius + 1, 2 * radius + 1), \
+            '%s incorrect shape: %s' % (hood.shape, hood)
+        return hood
 
     def _parse_inventory(self):
         found_inventory = False
@@ -267,11 +286,13 @@ class NethackBot:
                       r'Pw:(?P<pw>\d+)\((?P<pw_max>\d+)\)\s*'
                       r'AC:(?P<ac>\d+)\s*'
                       r'Exp:(?P<exp>\d+)\s*'
-                      r'(?P<hunger>Hungry|Weak|Fainting)?\s*'
+                      r'(?P<hunger>Satiated|Hungry|Weak|Fainting)?\s*'
+                      r'(?P<stun>Stun)?\s*'
+                      r'(?P<conf>Conf)?\s*'
+                      r'(?P<blind>Blind)?\s*'
                       r'(?P<burden>Burdened|Stressed|Strained|Overtaxed|Overloaded)?\s*'
                       r'(?P<hallu>Hallu)?\s*'
-                      r'(?P<conf>Conf)?\s*'
-                      r'(?P<stun>Stun)?', l)
+                      , l)
         if m:
             self.stats = m.groupdict()
             for k, v in self.stats.items():

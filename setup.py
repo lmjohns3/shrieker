@@ -14,6 +14,7 @@ setuptools.setup(
     url='http://github.com/lmjohns3/py-nethack',
     keywords=('nethack '
               ),
+    install_requires=['numpy'],
     classifiers=[
         'Development Status :: 3 - Alpha',
         'Environment :: Console',
