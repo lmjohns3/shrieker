@@ -106,7 +106,7 @@ class InventoryItem:
 
     @property
     def is_in_use(self):
-        return re.search(r'\(in use\)', self.raw)
+        return re.search(r'\((?:in use|lit)\)', self.raw)
 
     @property
     def duplicates(self):
