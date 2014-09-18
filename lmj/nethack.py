@@ -92,23 +92,23 @@ class InventoryItem:
 
     @property
     def is_cursed(self):
-        return ' cursed ' in self.raw
+        return re.search(r'\bcursed\b', self.raw)
 
     @property
     def is_uncursed(self):
-        return ' uncursed ' in self.raw
+        return re.search(r'\buncursed\b', self.raw)
 
     @property
     def is_blessed(self):
-        return ' blessed ' in self.raw
+        return re.search(r'\bblessed\b', self.raw)
 
     @property
     def is_being_worn(self):
-        return '(being worn)' in self.raw
+        return re.search(r'\(being worn\)', self.raw)
 
     @property
     def is_in_use(self):
-        return '(in use)' in self.raw
+        return re.search(r'\(in use\)', self.raw)
 
     @property
     def duplicates(self):
@@ -119,9 +119,9 @@ class InventoryItem:
 
     @property
     def charges(self):
-        m = re.match(r' \((\d+):(\d+)\)$', self.raw)
+        m = re.match(r'\((\d+):(\d+)\)', self.raw)
         if not m:
-            return None
+            return None, None
         return int(m.group(1)), int(m.group(2))
 
     @property
@@ -144,16 +144,15 @@ class ArmorItem(InventoryItem): pass
 class WeaponsItem(InventoryItem):
     @property
     def is_wielded(self):
-        return ('(weapon in hand)' in self.raw or
-                '(weapon in hands)' in self.raw)
+        return re.search(r'\(weapon in hands?\)', self.raw)
 
     @property
     def is_alternate(self):
-        return '(alternate weapon; not wielded)' in self.raw
+        return re.search(r'\(alternate weapon; not wielded\)', self.raw)
 
     @property
     def is_quivered(self):
-        return '(in quiver)' in self.raw
+        return re.search(r'\(in quiver\)', self.raw)
 
 class ComestiblesItem(InventoryItem): pass
 class ScrollsItem(InventoryItem): pass
