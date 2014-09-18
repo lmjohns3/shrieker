@@ -76,10 +76,8 @@ class CMD:
 
 
 class InventoryItem:
-    CATEGORIES = (
-        'Amulets', 'Weapons', 'Armor',
-        'Comestibles', 'Scrolls', 'Spellbooks',
-        'Potions', 'Rings', 'Wands', 'Tools')
+    CATEGORIES = 'Amulets', 'Weapons', 'Armor', 'Comestibles', 'Scrolls', \
+                 'Spellbooks', 'Potions', 'Rings', 'Wands', 'Tools', 'Gems'
 
     def __init__(self, raw):
         self.raw = raw.strip()
@@ -161,6 +159,7 @@ class PotionsItem(InventoryItem): pass
 class RingsItem(InventoryItem): pass
 class WandsItem(InventoryItem): pass
 class ToolsItem(InventoryItem): pass
+class GemsItem(InventoryItem): pass
 
 
 class NethackBot:
