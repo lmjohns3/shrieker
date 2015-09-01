@@ -1,47 +1,46 @@
 # from https://raw.github.com/helgefmi/ansiterm/master/ansiterm.py
 
+import logging
 import re
 
-class Tile:
+DEFAULT = dict(fg=37, bg=40, reverse=False, bold=False)
+
+
+class Error(Exception):
+    pass
+
+
+class EscapeError(Error):
+    pass
+
+
+class Tile(object):
     """Represents a single tile in the terminal"""
     def __init__(self):
         self.color = self.glyph = None
         self.reset()
-    
+
     def reset(self):
         """Resets the tile to a white-on-black space"""
-        self.color = {
-            'fg': 37, 'bg': 40,
-            'reverse': False,
-            'bold': False,
-        }
         self.glyph = ' '
+        self.color = DEFAULT.copy()
 
     def set(self, glyph, color):
         self.glyph = glyph
-        self.color['fg'] = color['fg']
-        self.color['bg'] = color['bg']
-        self.color['reverse'] = color['reverse']
-        self.color['bold'] = color['bold']
+        self.color.update(color)
 
-class Ansiterm:
-    _escape_parser = re.compile(r'^\x1b\[?([\d;]*)(\w)')
+
+class Ansiterm(object):
+    _ESCAPE_PARSER = re.compile(br'^\x1b\[([\d;]*)([A-Za-z])')
 
     def __init__(self, rows, cols, strict=True):
         """Initializes the ansiterm with rows*cols white-on-black spaces"""
         self.rows = rows
         self.cols = cols
         self.strict = strict
-        self.tiles = [Tile() for _ in xrange(rows * cols)]
-        self.cursor = {
-            'x': 0,
-            'y': 0,
-        }
-        self.color = {
-            'fg': 37, 'bg': 40,
-            'bold': False,
-            'reverse': False,
-        }
+        self.tiles = [Tile() for _ in range(rows * cols)]
+        self.cursor = dict(x=0, y=0)
+        self.color = dict(fg=37, bg=40, reverse=False, bold=False)
 
     def get_string(self, from_, to):
         """Returns the character of a section of the screen"""
@@ -57,22 +56,16 @@ class Ansiterm:
 
     def _parse_sgr(self, param):
         """Handles <escape code>n[;k]m, which changes the graphic rendition"""
-        if param >= 30 and param <= 37:
-            self.color['fg'] = param
-        elif param >= 40 and param <= 47:
-            self.color['bg'] = param
+        if param == 0:
+            self.color.update(DEFAULT)
         elif param == 1:
             self.color['bold'] = True
         elif param == 7:
             self.color['reverse'] = True
-        elif param == 0:
-            self.color['fg'] = 37
-            self.color['bg'] = 40
-            self.color['bold'] = False
-            self.color['reverse'] = False
-        else:
-            return False
-        return True
+        elif 30 <= param <= 37:
+            self.color['fg'] = param
+        elif 40 <= param <= 47:
+            self.color['bg'] = param
 
     def _fix_cursor(self):
         """
@@ -96,17 +89,24 @@ class Ansiterm:
         Example 1: \x1b[1;37;40m -> numbers=[1, 37, 40] char=m
         Example 2: \x1b[m = numbers=[0] char=m
         """
-        if input[0] != '\x1b':
-            return None, input
+        if input.startswith(b'\x1bM'):
+            return None, input[2:]
 
-        match = Ansiterm._escape_parser.match(input)
+        if input.startswith(b'\x1b[?'):
+            return None, input.split(b'h', 1)[1]
+
+        if input.startswith(b'\x1b(B') or input.startswith(b'\x1b)0'):
+            return None, input[3:]
+
+        match = Ansiterm._ESCAPE_PARSER.match(input)
         if not match:
             if self.strict:
-                raise Exception('Invalid escape sequence, input[:20]=%r' %\
-                                    input[:20])
+                raise Exception('Invalid escape sequence, input[:20]=%r' % input[:20])
             return None, input[1:]
 
         args, char = match.groups()
+        args = args.decode('utf-8')
+        char = char.decode('utf-8')
         # If arguments are omitted, add the default argument for this sequence.
         if not args:
             if char in 'ABCDEFSTf':
@@ -116,7 +116,7 @@ class Ansiterm:
             else:
                 numbers = [0]
         else:
-            numbers = map(int, args.split(';'))
+            numbers = list(map(int, args.split(';')))
 
         return (char, numbers), input[match.end():]
 
@@ -133,10 +133,10 @@ class Ansiterm:
 
         # Sets cursor position
         if char == 'H':
-            self.cursor['y'] = numbers[0] - 1 # 1-based indexes
-            self.cursor['x'] = numbers[1] - 1 #
+            self.cursor['y'] = numbers[0] - 1  # 1-based indexes
+            self.cursor['x'] = numbers[1] - 1  #
         # Sets color/boldness
-        elif char == 'm' or char == 'M':
+        elif char.lower() == 'm':
             for num in numbers:
                 self._parse_sgr(num)
         # Clears (parts of) the screen.
@@ -151,9 +151,9 @@ class Ansiterm:
             elif numbers[0] == 2:
                 range_ = (0, self.cols * self.rows - 1)
             else:
-                raise Exception('Unknown argument for J parameter: '
-                                '%s (input=%r)' % (numbers, input[:20]))
-            for i in xrange(*range_):
+                raise EscapeError('Unknown argument for J parameter: '
+                                  '%s (input=%r)' % (numbers, input[:20]))
+            for i in range(*range_):
                 self.tiles[i].reset()
         # Clears (parts of) the line
         elif char == 'K':
@@ -167,9 +167,9 @@ class Ansiterm:
             elif numbers[0] == 2:
                 range_ = (curidx % self.cols, curidx % self.cols + self.cols)
             else:
-                raise Exception('Unknown argument for K parameter: '
-                                '%s (input=%r)' % (numbers, input[:20]))
-            for i in xrange(*range_):
+                raise EscapeError('Unknown argument for K parameter: '
+                                  '%s (input=%r)' % (numbers, input[:20]))
+            for i in range(*range_):
                 self.tiles[i].reset()
         # Move cursor up
         elif char == 'A':
@@ -183,38 +183,37 @@ class Ansiterm:
         # Move cursor left
         elif char == 'D':
             self.cursor['x'] -= numbers[0]
-        elif char == 'r' or char == 'l': # TODO
+        elif char == 'r' or char == 'l':  # TODO
             pass
         else:
-            raise Exception('Unknown escape code: char=%r numbers=%r input=%r'\
-                            % (char, numbers, input[:20]))
+            raise EscapeError('unknown escape code: char=%r numbers=%r', char, numbers)
 
     def feed(self, input):
         """Feeds the terminal with input."""
         while input:
-            # If the input starts with \x1b, try to parse end evaluate a
+            # If the input starts with \x1b, try to parse and evaluate an escape
             # sequence.
-            parsed, input = self._parse_sequence(input)
-            if parsed:
-                self._evaluate_sequence(*parsed)
+            if input.startswith(b'\x1b'):
+                parsed, input = self._parse_sequence(input)
+                if parsed:
+                    self._evaluate_sequence(*parsed)
+                    continue
+            # If we end up here, the character should should just be
+            # added to the current tile and the cursor should be updated.
+            # Some characters such as \r, \n will only affect the cursor.
+            # TODO: Find out exactly what should be accepted here.
+            #       Only ASCII-7 perhaps?
+            a = input[:1]
+            if a == b'\r':
+                self.cursor['x'] = 0
+            elif a == b'\b':
+                self.cursor['x'] -= 1
+            elif a == b'\n':
+                self.cursor['y'] += 1
+            elif a == b'\x0f' or a == b'\x00':
+                pass
             else:
-                # If we end up here, the character should should just be
-                # added to the current tile and the cursor should be updated.
-                # Some characters such as \r, \n will only affect the cursor.
-                # TODO: Find out exactly what should be accepted here.
-                #       Only ASCII-7 perhaps?
-                a = input[0]
-                if a == '\r':
-                    self.cursor['x'] = 0
-                elif a == '\b':
-                    self.cursor['x'] -= 1
-                elif a == '\n':
-                    self.cursor['y'] += 1
-                elif a == '\x0f' or a == '\x00':
-                    pass
-                else:
-                    self.tiles[self.get_cursor_idx()].set(a, self.color)
-                    self.cursor['x'] += 1
-
-                input = input[1:]
+                self.tiles[self.get_cursor_idx()].set(a.decode('utf-8'), self.color)
+                self.cursor['x'] += 1
+            input = input[1:]
         self._fix_cursor()

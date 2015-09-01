@@ -2,13 +2,12 @@
 
 import collections
 import logging
-import numpy
+import numpy as np
 import os
 import pty
 import random
 import re
 import select
-import sys
 import tempfile
 
 import ansiterm
@@ -30,7 +29,6 @@ class CMD:
 
     PICKUP = ','
     WAIT = '.'
-    MORE = '\x0d' # ENTER
 
     APPLY = 'a'
     CLOSE = 'c'
@@ -55,8 +53,9 @@ class CMD:
     ZAP = 'z'
     CAST = 'Z'
 
-    KICK = '\x03' # ^D
-    TELEPORT = '\x14' # ^T
+    MORE = '\x0d'      # ENTER
+    KICK = '\x03'      # ^D
+    TELEPORT = '\x14'  # ^T
 
     class SPECIAL:
         CHAT = '#chat'
@@ -76,8 +75,9 @@ class CMD:
 
 
 class InventoryItem:
-    CATEGORIES = 'Amulets', 'Weapons', 'Armor', 'Comestibles', 'Scrolls', \
-                 'Spellbooks', 'Potions', 'Rings', 'Wands', 'Tools', 'Gems'
+    CATEGORIES = ('Amulets', 'Weapons', 'Armor', 'Comestibles',
+                  'Scrolls', 'Spellbooks', 'Potions', 'Rings',
+                  'Wands', 'Tools', 'Gems')
 
     def __init__(self, raw):
         self.raw = raw.strip()
@@ -136,8 +136,14 @@ class InventoryItem:
             return None
         return m.group(1)
 
-class AmuletsItem(InventoryItem): pass
-class ArmorItem(InventoryItem): pass
+
+class AmuletsItem(InventoryItem):
+    pass
+
+
+class ArmorItem(InventoryItem):
+    pass
+
 
 class WeaponsItem(InventoryItem):
     @property
@@ -152,46 +158,65 @@ class WeaponsItem(InventoryItem):
     def is_quivered(self):
         return re.search(r'\(in quiver\)', self.raw)
 
-class ComestiblesItem(InventoryItem): pass
-class ScrollsItem(InventoryItem): pass
-class SpellbooksItem(InventoryItem): pass
-class PotionsItem(InventoryItem): pass
-class RingsItem(InventoryItem): pass
-class WandsItem(InventoryItem): pass
-class ToolsItem(InventoryItem): pass
-class GemsItem(InventoryItem): pass
+
+class ComestiblesItem(InventoryItem):
+    pass
 
 
-class NethackBot:
-    OPTIONS = 'CHARACTER=%(character)s\nOPTIONS=hilite_pet,pickup_types:$?+!=/,gender:%(gender)s,race:%(race)s,align:%(align)s'
+class ScrollsItem(InventoryItem):
+    pass
 
-    def play(self, **kwargs):
-        shape = (25, 80)
-        self.glyphs = numpy.zeros(shape, int)
-        self.reverse = numpy.zeros(shape, bool)
-        self.bold = numpy.zeros(shape, bool)
-        self._raw = ''
+
+class SpellbooksItem(InventoryItem):
+    pass
+
+
+class PotionsItem(InventoryItem):
+    pass
+
+
+class RingsItem(InventoryItem):
+    pass
+
+
+class WandsItem(InventoryItem):
+    pass
+
+
+class ToolsItem(InventoryItem):
+    pass
+
+
+class GemsItem(InventoryItem):
+    pass
+
+
+class Player:
+    OPTIONS = ('CHARACTER={character}\n'
+               'OPTIONS=hilite_pet,pickup_types:$?+!=/,'
+               'gender:{gender},race:{race},align:{align}')
+
+    def play(self, shape=(40, 120), **kwargs):
+        self.glyphs = np.zeros(shape, int)
+        self.reverse = np.zeros(shape, bool)
+        self.bold = np.zeros(shape, bool)
         self._term = ansiterm.Ansiterm(*shape)
-
-        self.command = None
-
         self._need_inventory = True
-        self._more_inventory = False
-
+        self._has_more = False
+        self._command = None
         self.messages = collections.deque(maxlen=1000)
-
         self.stats = {}
         self.inventory = {}
         self.spells = {}
 
-        opts = dict(character=random.choice('ran wiz'.split()),
+        opts = dict(character=random.choice('bar pri ran val wiz'.split()),
                     gender=random.choice('mal fem'.split()),
                     race=random.choice('elf hum'.split()),
                     align=random.choice('cha neu'.split()))
         opts.update(kwargs)
 
         handle = tempfile.NamedTemporaryFile()
-        handle.write(self.OPTIONS % opts)
+        handle.write(self.OPTIONS.format(**opts).encode('utf-8'))
         handle.flush()
 
         os.environ['NETHACKOPTIONS'] = '@' + handle.name
@@ -207,65 +232,70 @@ class NethackBot:
     def neighborhood(self, radius=3):
         rows, cols = self.glyphs.shape
         y, x = self.cursor
-        ymin = y - radius
-        ymax = y + radius + 1
-        xmin = x - radius
-        xmax = x + radius + 1
-        hood = self.glyphs[slice(max(0, ymin), min(ymax, rows - 3)),
-                           slice(max(0, xmin), min(xmax, cols))]
-        for _ in xrange(abs(min(0, ymin))):
-            hood = numpy.hstack(numpy.zeros(), hood)
-        for _ in xrange(abs(min(0, xmin))):
-            hood = numpy.vstack(numpy.zeros(), hood)
-        for _ in xrange(max(0, ymax - cols)):
-            hood = numpy.hstack(hood, numpy.zeros())
-        for _ in xrange(max(0, xmax - (rows - 3))):
-            hood = numpy.vstack(hood, numpy.zeros())
-        assert hood.shape == (2 * radius + 1, 2 * radius + 1), \
-            '%s incorrect shape: %s' % (hood.shape, hood)
+        ylo, yhi = y - radius, y + radius + 1
+        xlo, xhi = x - radius, x + radius + 1
+        ulo, uhi = 0, 2 * radius + 1
+        vlo, vhi = 0, 2 * radius + 1
+        if y < radius:
+            ylo, ulo = 0, radius - y
+        if x < radius:
+            xlo, vlo = 0, radius - x
+        if y > rows - 3 - radius:
+            yhi, uhi = rows - 3, radius - (rows - y - 3)
+        if x > cols - radius:
+            xhi, vhi = cols, radius - (cols - x)
+        hood = np.zeros((2 * radius + 1, 2 * radius + 1), np.uint8)
+        hood[ulo:uhi, vlo:vhi] = self.glyphs[ylo:yhi, xlo:xhi]
         return hood
 
-    def _parse_inventory(self):
+    def _parse_inventory(self, raw):
         found_inventory = False
         for category in InventoryItem.CATEGORIES:
             klass = eval('%sItem' % category)
             contents = self.inventory.setdefault(category, {})
-            i = self._raw.find(category)
+            i = raw.find(category.encode('utf-8'))
             if i > 0:
-                s = self._raw[i:].split('\x1b[7m')[0]
-                for letter, name in re.findall(' (\w) - (.*?)(?=\x1b\[)', s):
-                    contents[letter] = klass(name)
+                s = raw[i:].split(b'\x1b[7m')[0]
+                for letter, name in re.findall(br' (\w) - (.*?)(?=\x1b\[)', s):
+                    contents[letter.decode('utf-8')] = klass(name.decode('utf-8'))
                 logging.error('inventory for %s: %s', category, contents)
                 found_inventory = True
         self._need_inventory = not found_inventory
 
-    def _parse_glyphs(self):
+    def _parse_glyphs(self, raw):
         Y, X = self.glyphs.shape
 
-        self._term.feed(self._raw)
+        self._term.feed(raw)
 
         for y in range(Y):
             tiles = self._term.get_tiles(X * y, X * (y + 1))
-            logging.debug('terminal %02d: %s', y, ''.join(t.glyph for t in tiles))
-            self.glyphs[y] = [ord(t.glyph) for t in tiles]
+            logging.debug('terminal %02d: %s', y, ''.join(str(t.glyph) for t in tiles))
+            self.glyphs[y] = [ord(t.glyph) if t.glyph else 0 for t in tiles]
             self.bold[y] = [t.color['bold'] for t in tiles]
             self.reverse[y] = [t.color['reverse'] for t in tiles]
 
         self.cursor = (self._term.cursor['y'], self._term.cursor['x'])
 
-        logging.info('current map:\n%s', '\n'.join(''.join(chr(c) for c in r) for r in self.glyphs))
-        logging.warn('current neighborhood:\n%s', '\n'.join(''.join(chr(c) for c in r)
-                                                            for r in self.neighborhood(3)))
+        logging.info('current map:\n%s', '\n'.join(
+            ''.join(chr(c) for c in r) for r in self.glyphs))
+        logging.warn('current neighborhood:\n%s', '\n'.join(
+            ''.join(chr(c) for c in r) for r in self.neighborhood(3)))
 
-        # parse messages from the first line on the screen.
+        self._parse_message()
+        self._parse_attributes()
+        self._parse_stats()
+
+    def _parse_message(self):
+        '''Parse a message from the first line on the screen.'''
         l = ''.join(chr(c) for c in self.glyphs[0])
         if l.strip() and l[0].strip():
             logging.warn('message: %s', l)
             self.messages.append(l)
 
-        # parse character attributes.
+    def _parse_attributes(self):
+        '''Parse character attributes.'''
         l = ''.join(chr(c) for c in self.glyphs[22])
-        m = re.search(r'St:(?P<st>\d+)\s*'
+        m = re.search(r'St:(?P<st>[/\d]+)\s*'
                       r'Dx:(?P<dx>\d+)\s*'
                       r'Co:(?P<co>\d+)\s*'
                       r'In:(?P<in>\d+)\s*'
@@ -274,9 +304,11 @@ class NethackBot:
                       r'(?P<align>\S+)', l)
         if m:
             self.attributes = m.groupdict()
-            logging.warn('parsed attributes: %s', ', '.join('%s: %s' % (k, self.attributes[k]) for k in sorted(self.attributes)))
+            logging.warn('parsed attributes: %s', ', '.join('%s: %s' % (
+                k, self.attributes[k]) for k in sorted(self.attributes)))
 
-        # parse stats from the penultimate line.
+    def _parse_stats(self):
+        '''Parse stats from the penultimate line.'''
         l = ''.join(chr(c) for c in self.glyphs[23])
         m = re.search(r'Dlvl:(?P<dlvl>\S+)\s*'
                       r'\$:(?P<money>\d+)\s*'
@@ -289,66 +321,65 @@ class NethackBot:
                       r'(?P<conf>Conf)?\s*'
                       r'(?P<blind>Blind)?\s*'
                       r'(?P<burden>Burdened|Stressed|Strained|Overtaxed|Overloaded)?\s*'
-                      r'(?P<hallu>Hallu)?\s*'
-                      , l)
+                      r'(?P<hallu>Hallu)?\s*', l)
         if m:
             self.stats = m.groupdict()
             for k, v in self.stats.items():
                 if v and v.isdigit():
                     self.stats[k] = int(v)
-            logging.warn('parsed stats: %s', ', '.join('%s: %s' % (k, self.stats[k]) for k in sorted(self.stats)))
+            logging.warn('parsed stats: %s', ', '.join(
+                '%s: %s' % (k, self.stats[k]) for k in sorted(self.stats)))
 
     def _observe(self, raw):
-        self._raw = re.sub(r'\x1b\[\?\d+h', '', raw)
-        if not self._raw:
-            return
+        logging.debug('observed %d world bytes:\n%r', len(raw), raw)
 
-        logging.debug('observed %d world bytes:\n%s',
-                      len(self._raw),
-                      '\n'.join(repr(p) for p in self._raw.split('\x1b[')))
+        self._parse_glyphs(raw)
 
-        self._parse_glyphs()
-
-        if self.command is CMD.INVENTORY:
-            if not self._more_inventory:
+        if self._command is CMD.INVENTORY:
+            if not self._has_more:
                 self.inventory = {}
-            self._parse_inventory()
-            self._more_inventory = '--More--' in self._raw
+            self._parse_inventory(raw)
 
-        self.command = None
+        self._command = None
+        self._has_more = b'--More--' in raw or b'(end)' in raw
 
     def _act(self):
         msg = self.messages and self.messages[-1] or ''
-        if '--More--' in self._raw or '(end)' in self._raw:
-            self.command = CMD.MORE
+        if self._has_more:
+            self._command = CMD.MORE
         elif 'You die' in msg:
-            self.command = 'q'
+            self._command = 'q'
         elif '? ' in msg and ' written ' not in msg:
-            self.command = self.choose_answer()
+            self._command = self.choose_answer()
         elif self._need_inventory:
-            self.command = CMD.INVENTORY
+            self._command = CMD.INVENTORY
         else:
-            self.command = self.choose_action()
-        logging.warn('sending command "%s"', self.command)
-        return self.command
+            self._command = self.choose_action()
+        logging.warn('sending command "%s"', self._command)
+        return self._command
 
 
-class RandomBot(NethackBot):
+class RandomMover(Player):
+    def choose_answer(self):
+        return 'n'
+
     def choose_action(self):
-        return random.choice([CMD.DIR.N, CMD.DIR.NE, CMD.DIR.E, CMD.DIR.SE,
-                              CMD.DIR.S, CMD.DIR.SW, CMD.DIR.W, CMD.DIR.NW,
-                              ])
+        return random.choice([
+            CMD.DIR.N, CMD.DIR.NE, CMD.DIR.E, CMD.DIR.SE,
+            CMD.DIR.S, CMD.DIR.SW, CMD.DIR.W, CMD.DIR.NW,
+        ])
 
 
 # drain all available bytes from the given file descriptor, until a complete
 # timeout goes by with no new data.
 def _drain(fd, timeout=0.3):
     more, _, _ = select.select([fd], [], [], timeout)
-    buf = ''
+    buf = b''
     while more:
         buf += os.read(fd, 1024)
         more, _, _ = select.select([fd], [], [], timeout)
     return buf
+
 
 # we almost want to do what pty.spawn does, except that we know how our child
 # process works. so, we forever loop: read world state from nethack, then issue
@@ -359,16 +390,18 @@ def _copy(fd, observe, act):
         if buf:
             observe(buf)
             os.write(1, buf)
-        pty._writen(fd, act())
+        pty._writen(fd, act().encode('utf-8'))
+
 
 # monkeys ahoy !
 pty._copy = _copy
 
 
 if __name__ == '__main__':
+    #import sys
     logging.basicConfig(
         stream=open('/tmp/nethack-bot.log', 'w'),
-        level=logging.INFO,
+        level=logging.DEBUG,
         format='%(levelname).1s %(asctime)s %(message)s')
-    bot = RandomBot()
-    bot.play()
+    rm = RandomMover()
+    rm.play()
