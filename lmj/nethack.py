@@ -10,48 +10,20 @@ import re
 import select
 import tempfile
 
-import ansiterm
+import vt102
+
+ROWS = 25
+COLS = 80
 
 
 class CMD:
     class DIR:
-        NW = 'y'
-        N = 'k'
-        NE = 'u'
-        E = 'l'
-        SE = 'n'
-        S = 'j'
-        SW = 'b'
-        W = 'h'
+        NW, N, NE, E, SE, S, SW, W = 'ykulnjbh'
+        UP, DOWN = '<>'
 
-        UP = '<'
-        DOWN = '>'
-
-    PICKUP = ','
-    WAIT = '.'
-
-    APPLY = 'a'
-    CLOSE = 'c'
-    DROP = 'd'
-    EAT = 'e'
-    ENGRAVE = 'E'
-    FIRE = 'f'
-    INVENTORY = 'i'
-    OPEN = 'o'
-    PAY = 'p'
-    PUTON = 'P'
-    QUAFF = 'q'
-    QUIVER = 'Q'
-    READ = 'r'
-    REMOVE = 'R'
-    SEARCH = 's'
-    THROW = 't'
-    TAKEOFF = 'T'
-    WIELD = 'w'
-    WEAR = 'W'
-    EXCHANGE = 'x'
-    ZAP = 'z'
-    CAST = 'Z'
+    APPLY, CLOSE, DROP, EAT, ENGRAVE, FIRE, INVENTORY, OPEN = 'acdeEfio'
+    PAY, PUTON, QUAFF, QUIVER, READ, REMOVE, SEARCH, THROW = 'pPqQrRst'
+    TAKEOFF, WIELD, WEAR, EXCHANGE, ZAP, CAST, PICKUP, WAIT = 'TwWxzZ,.'
 
     MORE = '\x0d'      # ENTER
     KICK = '\x03'      # ^D
@@ -196,14 +168,15 @@ class Player:
                'OPTIONS=hilite_pet,pickup_types:$?+!=/,'
                'gender:{gender},race:{race},align:{align}')
 
-    def play(self, shape=(40, 120), **kwargs):
-        self.glyphs = np.zeros(shape, int)
-        self.reverse = np.zeros(shape, bool)
-        self.bold = np.zeros(shape, bool)
-        self._term = ansiterm.Ansiterm(*shape)
+    def __init__(self, **kwargs):
+        self._stream = vt102.stream()
+        self._screen = vt102.screen((ROWS, COLS))
+        self._screen.attach(self._stream)
+
         self._need_inventory = True
         self._has_more = False
         self._command = None
+
         self.messages = collections.deque(maxlen=1000)
         self.stats = {}
         self.inventory = {}
@@ -221,6 +194,7 @@ class Player:
 
         os.environ['NETHACKOPTIONS'] = '@' + handle.name
 
+    def play(self):
         pty.spawn(['nethack'], self._observe, self._act)
 
     def choose_action(self):
@@ -230,8 +204,7 @@ class Player:
         raise NotImplementedError
 
     def neighborhood(self, radius=3):
-        rows, cols = self.glyphs.shape
-        y, x = self.cursor
+        x, y = self._screen.cursor()
         ylo, yhi = y - radius, y + radius + 1
         xlo, xhi = x - radius, x + radius + 1
         ulo, uhi = 0, 2 * radius + 1
@@ -240,12 +213,12 @@ class Player:
             ylo, ulo = 0, radius - y
         if x < radius:
             xlo, vlo = 0, radius - x
-        if y > rows - 3 - radius:
-            yhi, uhi = rows - 3, radius - (rows - y - 3)
-        if x > cols - radius:
-            xhi, vhi = cols, radius - (cols - x)
+        if y > ROWS - radius:
+            yhi, uhi = ROWS, radius - (ROWS - y)
+        if x > COLS - radius:
+            xhi, vhi = COLS, radius - (COLS - x)
         hood = np.zeros((2 * radius + 1, 2 * radius + 1), np.uint8)
-        hood[ulo:uhi, vlo:vhi] = self.glyphs[ylo:yhi, xlo:xhi]
+        hood[ulo:uhi, vlo:vhi] = self._screen.display[ylo:yhi][xlo:xhi]
         return hood
 
     def _parse_inventory(self, raw):
@@ -263,21 +236,9 @@ class Player:
         self._need_inventory = not found_inventory
 
     def _parse_glyphs(self, raw):
-        Y, X = self.glyphs.shape
+        self._stream.process(raw)
 
-        self._term.feed(raw)
-
-        for y in range(Y):
-            tiles = self._term.get_tiles(X * y, X * (y + 1))
-            logging.debug('terminal %02d: %s', y, ''.join(str(t.glyph) for t in tiles))
-            self.glyphs[y] = [ord(t.glyph) if t.glyph else 0 for t in tiles]
-            self.bold[y] = [t.color['bold'] for t in tiles]
-            self.reverse[y] = [t.color['reverse'] for t in tiles]
-
-        self.cursor = (self._term.cursor['y'], self._term.cursor['x'])
-
-        logging.info('current map:\n%s', '\n'.join(
-            ''.join(chr(c) for c in r) for r in self.glyphs))
+        logging.info('current map:\n%s', self._screen.display)
         logging.warn('current neighborhood:\n%s', '\n'.join(
             ''.join(chr(c) for c in r) for r in self.neighborhood(3)))
 
@@ -287,14 +248,14 @@ class Player:
 
     def _parse_message(self):
         '''Parse a message from the first line on the screen.'''
-        l = ''.join(chr(c) for c in self.glyphs[0])
+        l = self._screen.display[0]
         if l.strip() and l[0].strip():
             logging.warn('message: %s', l)
             self.messages.append(l)
 
     def _parse_attributes(self):
         '''Parse character attributes.'''
-        l = ''.join(chr(c) for c in self.glyphs[22])
+        l = self._screen.display[22]
         m = re.search(r'St:(?P<st>[/\d]+)\s*'
                       r'Dx:(?P<dx>\d+)\s*'
                       r'Co:(?P<co>\d+)\s*'
@@ -309,7 +270,7 @@ class Player:
 
     def _parse_stats(self):
         '''Parse stats from the penultimate line.'''
-        l = ''.join(chr(c) for c in self.glyphs[23])
+        l = self._screen.display[23]
         m = re.search(r'Dlvl:(?P<dlvl>\S+)\s*'
                       r'\$:(?P<money>\d+)\s*'
                       r'HP:(?P<hp>\d+)\((?P<hp_max>\d+)\)\s*'
@@ -331,15 +292,11 @@ class Player:
                 '%s: %s' % (k, self.stats[k]) for k in sorted(self.stats)))
 
     def _observe(self, raw):
-        logging.debug('observed %d world bytes:\n%r', len(raw), raw)
-
         self._parse_glyphs(raw)
-
         if self._command is CMD.INVENTORY:
             if not self._has_more:
                 self.inventory = {}
             self._parse_inventory(raw)
-
         self._command = None
         self._has_more = b'--More--' in raw or b'(end)' in raw
 
