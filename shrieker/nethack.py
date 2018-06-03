@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 import collections
 import logging
 import numpy as np
@@ -9,7 +7,6 @@ import random
 import re
 import select
 import tempfile
-
 import vt102
 
 ROWS = 25

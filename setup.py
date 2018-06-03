@@ -2,19 +2,17 @@ import os
 import setuptools
 
 setuptools.setup(
-    name='lmj.nethack',
+    name='shrieker',
     version='0.1.1',
-    namespace_packages=['lmj'],
     packages=setuptools.find_packages(),
-    author='Leif Johnson',
-    author_email='leif@leifjohnson.net',
+    author='lmjohns3',
+    author_email='shrieker@lmjohns3.com',
     description='A pty wrapper for nethack',
     long_description=open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'README.md')).read(),
     license='MIT',
-    url='http://github.com/lmjohns3/py-nethack',
-    keywords=('nethack '
-              ),
-    install_requires=['numpy'],
+    url='http://github.com/lmjohns3/shrieker',
+    keywords='nethack',
+    install_requires=['numpy', 'vt102'],
     classifiers=[
         'Development Status :: 3 - Alpha',
         'Environment :: Console',
